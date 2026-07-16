@@ -1,5 +1,5 @@
 {
-  "name": "iceberg-explainer-wasm",
+  "name": "iceberg-explainer-web",
   "private": true,
   "version": "0.1.0",
   "type": "module",

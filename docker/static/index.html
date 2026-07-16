@@ -32,15 +32,15 @@
       <form id="add-row-form" class="row-form">
         <label>
           date
-          <input name="date" type="text" placeholder="2026-07-16" required />
+          <input name="date" type="date" required />
         </label>
         <label>
           state
-          <input name="state" type="text" placeholder="CA" required />
+          <select name="state" required></select>
         </label>
         <label>
           value
-          <input name="value" type="text" placeholder="anything" required />
+          <input name="value" type="text" required />
         </label>
         <button type="submit">Add row</button>
       </form>
@@ -115,6 +115,7 @@
   </main>
 
   <div id="toast" class="toast hidden"></div>
+  <script src="/static/rowDefaults.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

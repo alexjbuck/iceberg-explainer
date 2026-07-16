@@ -2,6 +2,7 @@ import {
   fileCatalog,
   icebergAppend,
   icebergCreateTable,
+  icebergDelete,
   icebergDropTable,
   icebergManifests,
   icebergRead,
@@ -12,6 +13,9 @@ import type { FileCatalog, TableMetadata } from 'icebird/src/types.js'
 import { fetchSnapshotBundle, type MetadataBundle } from './metadata.js'
 import { formatRow, isoToDays } from './json.js'
 import { MemoryObjectStore } from './memoryStore.js'
+import { resolveVisibleRows, type RowRef } from './rowLocations.js'
+
+export type { RowRef }
 
 const TABLE_URL = 'memory://warehouse/demo/events'
 
@@ -150,6 +154,10 @@ export class IcebergExplainer {
       tableUrl: TABLE_URL,
       schema: SCHEMA,
       partitionSpec: PARTITION_SPEC,
+      formatVersion: 2,
+      properties: {
+        'write.delete.mode': 'merge-on-read',
+      },
     })
     return this.capture('Empty table created', 'reset')
   }
@@ -161,6 +169,38 @@ export class IcebergExplainer {
       records: [{ date: isoToDays(date), state, value }],
     })
     return this.capture(`Added row: ${date} / ${state} / ${value}`, 'append')
+  }
+
+  async deleteRow(logicalIndex: number): Promise<number> {
+    const { metadata } = await loadLatestFileCatalogMetadata({
+      tableUrl: TABLE_URL,
+      resolver: this.store.resolver(),
+      lister: this.store.lister(),
+    })
+    const refs = await resolveVisibleRows(metadata, this.store)
+    const target = refs[logicalIndex]
+    if (!target) {
+      throw new Error(`Row index ${logicalIndex} out of range`)
+    }
+
+    await icebergDelete({
+      catalog: this.catalog,
+      tableUrl: TABLE_URL,
+      resolver: this.store.resolver(),
+      deletes: [{ file_path: target.file_path, pos: target.pos }],
+    })
+    return this.capture(
+      `Deleted row at pos ${target.pos} in ${target.file_path.split('/').pop()}: ${target.date} / ${target.state} / ${target.value}`,
+      'delete',
+    )
+  }
+
+  async getVisibleRows(): Promise<RowRef[]> {
+    if (this.history.length === 0) return []
+    const entry = this.history[this.history.length - 1]
+    if (entry.metadata['current-snapshot-id'] == null) return []
+    const refs = await resolveVisibleRows(entry.metadata, this.store)
+    return refs.map((row, index) => ({ index, ...row }))
   }
 
   async compact(): Promise<number> {

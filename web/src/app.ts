@@ -2,7 +2,8 @@ import { diffSnapshots } from './metadata.js'
 import { IcebergExplainer } from './explainer.js'
 import { toJson } from './json.js'
 import { readParquetFiles } from './parquet.js'
-import type { SnapshotSummary } from './explainer.js'
+import { RowDefaults } from './rowDefaults.js'
+import type { SnapshotSummary, RowRef } from './explainer.js'
 
 type PartitionInfo = {
   date_month: unknown
@@ -55,16 +56,21 @@ function escapeHtml(text: unknown) {
     .replaceAll('>', '&gt;')
 }
 
-function renderRows(rows: Array<Record<string, string>>) {
+function renderRows(rows: RowRef[], onDelete: (index: number) => void) {
   els.rowsBody.innerHTML = ''
   if (!rows.length) {
     els.rowsBody.innerHTML =
-      '<tr><td colspan="3" class="empty">No rows yet — add one to create the first snapshot.</td></tr>'
+      '<tr><td colspan="4" class="empty">No rows yet — add one to create the first snapshot.</td></tr>'
     return
   }
   for (const row of rows) {
     const tr = document.createElement('tr')
-    tr.innerHTML = `<td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.state)}</td><td>${escapeHtml(row.value)}</td>`
+    tr.innerHTML = `
+      <td>${escapeHtml(row.date)}</td>
+      <td>${escapeHtml(row.state)}</td>
+      <td>${escapeHtml(row.value)}</td>
+      <td class="row-actions"><button type="button" class="danger compact" data-row-index="${row.index}">Delete</button></td>`
+    tr.querySelector('button')!.addEventListener('click', () => onDelete(row.index))
     els.rowsBody.appendChild(tr)
   }
 }
@@ -98,7 +104,12 @@ function renderSnapshotList() {
     els.snapshotLabel.textContent = 'No snapshots'
     return
   }
-  const actionClass = snap.action === 'compact' ? 'action-compact' : ''
+  const actionClass =
+    snap.action === 'compact'
+      ? 'action-compact'
+      : snap.action === 'delete'
+        ? 'action-delete'
+        : ''
   els.snapshotLabel.innerHTML = `
     <strong>#${snap.index}</strong> · ${escapeHtml(snap.label)}<br />
     <span class="muted ${actionClass}">snapshot-id: ${snap.snapshot_id ?? 'none'} · ${snap.row_count} row(s) · ${snap.action}</span>
@@ -178,15 +189,23 @@ function renderStatsTable(columns: Array<Record<string, unknown>>) {
     </tr></thead><tbody>${body}</tbody></table></div>`
 }
 
+function contentLabel(content: unknown) {
+  if (content === 0 || content === 'DATA') return 'data (0)'
+  if (content === 1 || content === 'POSITION_DELETES') return 'position delete (1)'
+  if (content === 2 || content === 'EQUALITY_DELETES') return 'equality delete (2)'
+  return String(content ?? '?')
+}
+
 function renderParquet(data: Awaited<ReturnType<typeof readParquetFiles>>) {
   const files = data?.files || []
   if (!files.length) {
     els.parquetContent.innerHTML =
-      '<p class="empty">No Parquet data files yet — add a row first.</p>'
+      '<p class="empty">No Parquet files yet — add a row first.</p>'
     return
   }
   els.parquetContent.innerHTML = files
     .map((file, i) => {
+      const fileType = file.file_type === 'position_delete' ? 'Position delete file' : 'Data file'
       const rowGroups = ((file.row_groups as Array<Record<string, unknown>>) || [])
         .map(
           (rg) => `
@@ -211,7 +230,7 @@ function renderParquet(data: Awaited<ReturnType<typeof readParquetFiles>>) {
         .join('')
       return `
         <div class="card">
-          <h3>Data file ${i + 1}</h3>
+          <h3>${fileType} ${i + 1}</h3>
           <div class="path">${escapeHtml(file.path)}</div>
           <div class="kv-grid">
             <div><strong>Rows</strong>${file.num_rows}</div>
@@ -222,12 +241,16 @@ function renderParquet(data: Awaited<ReturnType<typeof readParquetFiles>>) {
           ${renderDataTable((file.columns as string[]) || [], (file.rows as Array<Record<string, string>>) || [])}
           <h4>Parquet footer statistics</h4>
           ${rowGroups || '<p class="empty">No row group statistics.</p>'}
-          <div class="subcard">
+          ${
+            file.file_type === 'position_delete'
+              ? ''
+              : `<div class="subcard">
             <h4>Iceberg manifest stats (copied into metadata)</h4>
             <div class="table-wrap"><table><thead><tr>
               <th>column</th><th>lower</th><th>upper</th><th>nulls</th><th>values</th>
             </tr></thead><tbody>${icebergStats}</tbody></table></div>
-          </div>
+          </div>`
+          }
         </div>`
     })
     .join('')
@@ -251,6 +274,7 @@ function renderManifests(snapshot: ReturnType<IcebergExplainer['getSnapshot']>) 
           return `<tr>
             <td>${escapeHtml(toJson(partition))}</td>
             <td>${escapeHtml(basename(String(dataFile.file_path ?? '')))}</td>
+            <td>${contentLabel(dataFile.content)}</td>
             <td>${raw.status}</td>
             <td>${raw.file_sequence_number ?? ''}</td>
           </tr>`
@@ -260,7 +284,7 @@ function renderManifests(snapshot: ReturnType<IcebergExplainer['getSnapshot']>) 
         <div class="card">
           <h3>Manifest ${i + 1}</h3>
           <div class="path">${escapeHtml(manifest.path)}</div>
-          <table><thead><tr><th>partition</th><th>data file</th><th>status</th><th>seq</th></tr></thead>
+          <table><thead><tr><th>partition</th><th>file</th><th>content</th><th>status</th><th>seq</th></tr></thead>
           <tbody>${entryRows}</tbody></table>
           <details><summary>Raw manifest entries</summary><pre>${escapeHtml(toJson(entries))}</pre></details>
         </div>`
@@ -331,13 +355,21 @@ async function loadSnapshotDetail(explainer: IcebergExplainer, index: number) {
 }
 
 async function refreshAll(explainer: IcebergExplainer, selectIndex: number | null = null) {
-  const rows = await explainer.getRows()
+  const rows = await explainer.getVisibleRows()
   const partitions = explainer.getPartitions() as PartitionInfo[]
   state.snapshots = explainer.listSnapshots()
   state.parquetCache = {}
   state.currentIndex =
     selectIndex !== null ? selectIndex : Math.max(0, state.snapshots.length - 1)
-  renderRows(rows)
+  renderRows(rows, async (index) => {
+    try {
+      const idx = await explainer.deleteRow(index)
+      await refreshAll(explainer, idx)
+      showToast('Row deleted — position delete snapshot created')
+    } catch (err) {
+      showToast(`Error: ${(err as Error).message}`)
+    }
+  })
   renderPartitions(partitions)
   renderSnapshotList()
   await loadSnapshotDetail(explainer, state.currentIndex)
@@ -347,6 +379,11 @@ export async function initApp(explainer: IcebergExplainer) {
   if (new URLSearchParams(location.search).has('embed')) {
     document.body.classList.add('embed')
   }
+
+  const rowDefaults = new RowDefaults()
+  const stateSelect = els.addForm.elements.namedItem('state') as HTMLSelectElement
+  rowDefaults.populateStateSelect(stateSelect)
+  rowDefaults.fillForm(els.addForm)
 
   els.compactBtn.disabled = true
 
@@ -359,7 +396,8 @@ export async function initApp(explainer: IcebergExplainer) {
         String(form.get('state')),
         String(form.get('value')),
       )
-      els.addForm.reset()
+      rowDefaults.advanceAfterAdd()
+      rowDefaults.fillForm(els.addForm)
       await refreshAll(explainer, idx)
       showToast('Row appended — new snapshot created')
     } catch (err) {
@@ -371,6 +409,8 @@ export async function initApp(explainer: IcebergExplainer) {
     if (!confirm('Drop the table and delete all snapshots?')) return
     try {
       const idx = await explainer.reset()
+      rowDefaults.reset()
+      rowDefaults.fillForm(els.addForm)
       await refreshAll(explainer, idx)
       showToast('Table reset')
     } catch (err) {

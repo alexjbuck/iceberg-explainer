@@ -128,17 +128,23 @@ main {
 
 #rows-table th:nth-child(1),
 #rows-table td:nth-child(1) {
-  width: 36%;
+  width: 28%;
 }
 
 #rows-table th:nth-child(2),
 #rows-table td:nth-child(2) {
-  width: 30%;
+  width: 22%;
 }
 
 #rows-table th:nth-child(3),
 #rows-table td:nth-child(3) {
-  width: 34%;
+  width: 30%;
+}
+
+#rows-table th:nth-child(4),
+#rows-table td:nth-child(4) {
+  width: 20%;
+  max-width: none;
 }
 
 #rows-table th .tag {
@@ -224,6 +230,26 @@ button.secondary:disabled {
   color: var(--warning);
 }
 
+.snapshot-label .action-delete {
+  color: #f87171;
+}
+
+.row-actions {
+  text-align: right;
+  white-space: nowrap;
+  max-width: none;
+}
+
+.row-actions-h {
+  text-align: right;
+  max-width: none;
+}
+
+button.compact {
+  padding: 0.35rem 0.55rem;
+  font-size: 0.8rem;
+}
+
 label {
   display: grid;
   gap: 0.25rem;
@@ -231,7 +257,9 @@ label {
   color: var(--muted);
 }
 
-input[type="text"] {
+input[type="text"],
+input[type="date"],
+select {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -240,6 +268,14 @@ input[type="text"] {
   font: inherit;
   width: 100%;
   min-width: 0;
+}
+
+input[type="date"] {
+  color-scheme: dark;
+}
+
+select {
+  cursor: pointer;
 }
 
 button {

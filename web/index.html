@@ -32,15 +32,15 @@
         <form id="add-row-form" class="row-form">
           <label>
             date
-            <input name="date" type="text" placeholder="2026-07-16" required />
+            <input name="date" type="date" required />
           </label>
           <label>
             state
-            <input name="state" type="text" placeholder="CA" required />
+            <select name="state" required></select>
           </label>
           <label>
             value
-            <input name="value" type="text" placeholder="anything" required />
+            <input name="value" type="text" required />
           </label>
           <button type="submit">Add row</button>
         </form>
@@ -57,6 +57,7 @@
                 <th>date <span class="tag" title="month transform">mo</span></th>
                 <th>state <span class="tag" title="bucket[10] transform">b10</span></th>
                 <th>value</th>
+                <th class="row-actions-h">del</th>
               </tr>
             </thead>
             <tbody></tbody>

@@ -231,7 +231,9 @@ label {
   color: var(--muted);
 }
 
-input[type="text"] {
+input[type="text"],
+input[type="date"],
+select {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -240,6 +242,14 @@ input[type="text"] {
   font: inherit;
   width: 100%;
   min-width: 0;
+}
+
+input[type="date"] {
+  color-scheme: dark;
+}
+
+select {
+  cursor: pointer;
 }
 
 button {

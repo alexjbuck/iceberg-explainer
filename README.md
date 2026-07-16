@@ -6,7 +6,7 @@ Two self-contained variants live in this repo:
 
 | Variant | Directory | Stack | Deploy |
 |---------|-----------|-------|--------|
-| **Browser** | [`wasm/`](wasm/) | TypeScript + [icebird](https://github.com/hyparam/icebird) | [GitHub Pages](https://alexjbuck.github.io/iceberg-explainer/) (auto-deployed from `main`) |
+| **Browser** | [`web/`](web/) | TypeScript + [icebird](https://github.com/hyparam/icebird) | [GitHub Pages](https://alexjbuck.github.io/iceberg-explainer/) (auto-deployed from `main`) |
 | **Docker** | [`docker/`](docker/) | PyIceberg + FastAPI + RustFS | Local only |
 
 Both implement the same demo:
@@ -24,7 +24,7 @@ Open the live demo: **https://alexjbuck.github.io/iceberg-explainer/**
 Or run locally:
 
 ```bash
-cd wasm
+cd web
 npm install
 npm run dev
 ```
@@ -47,10 +47,10 @@ See [`docker/README.md`](docker/README.md) for environment variables and layout.
 ## Project layout
 
 ```
-wasm/                  # Client-only variant (GitHub Pages)
+web/                  # Client-only variant (GitHub Pages)
 docker/                # Server variant (PyIceberg + RustFS)
   backend/
   static/
   docker-compose.yml
-.github/workflows/     # Builds wasm/ and deploys to GitHub Pages
+.github/workflows/     # Builds web/ and deploys to GitHub Pages
 ```

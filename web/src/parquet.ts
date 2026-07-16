@@ -81,6 +81,7 @@ export async function readParquetFiles(
       if ((entry.status as number) === MANIFEST_DELETED) continue
       const dataFile = entry.data_file as Record<string, unknown> | undefined
       if (!dataFile?.file_path) continue
+      const content = dataFile.content as number
       const path = String(dataFile.file_path)
       const bytes = store.read(path)
       if (!bytes) continue
@@ -90,20 +91,43 @@ export async function readParquetFiles(
         bytes.byteOffset + bytes.byteLength,
       ) as ArrayBuffer
       const meta = parquetMetadata(buffer)
+
+      if (content === 1) {
+        const rowsRaw = await parquetReadObjects({ file: buffer })
+        const rows = rowsRaw.map((row) => ({
+          file_path: String((row as Record<string, unknown>).file_path ?? ''),
+          pos: String((row as Record<string, unknown>).pos ?? ''),
+        }))
+        files.push({
+          path,
+          file_name: path.split('/').pop(),
+          file_type: 'position_delete',
+          file_size_bytes: bytes.byteLength,
+          num_rows: String(meta.num_rows),
+          partition: dataFile.partition,
+          columns: ['file_path', 'pos'],
+          rows,
+          row_groups: parquetRowGroupStats(meta),
+          iceberg_manifest_stats: [],
+        })
+        continue
+      }
+
+      if (content !== 0) continue
+
       const rowsRaw = await parquetReadObjects({ file: buffer })
       const rows = rowsRaw.map((row) => formatRow(row as Record<string, unknown>))
-
-      const rowGroups = parquetRowGroupStats(meta)
 
       files.push({
         path,
         file_name: path.split('/').pop(),
+        file_type: 'data',
         file_size_bytes: bytes.byteLength,
         num_rows: String(meta.num_rows),
         partition: dataFile.partition,
         columns: ['date', 'state', 'value'],
         rows,
-        row_groups: rowGroups,
+        row_groups: parquetRowGroupStats(meta),
         iceberg_manifest_stats: icebergManifestStats(dataFile),
       })
     }

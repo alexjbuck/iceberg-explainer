@@ -450,7 +450,8 @@ els.addForm.addEventListener("submit", async (event) => {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    els.addForm.reset();
+    window.rowDefaults.advanceAfterAdd();
+    window.rowDefaults.fillForm(els.addForm);
     await refreshAll(result.snapshot_index);
     showToast("Row appended — new snapshot created");
   } catch (err) {
@@ -462,6 +463,8 @@ els.resetBtn.addEventListener("click", async () => {
   if (!confirm("Drop the table and delete all snapshots?")) return;
   try {
     const result = await api("/api/reset", { method: "POST" });
+    window.rowDefaults.reset();
+    window.rowDefaults.fillForm(els.addForm);
     await refreshAll(result.snapshot_index);
     showToast("Table reset");
   } catch (err) {
@@ -480,6 +483,9 @@ els.compactBtn.addEventListener("click", async () => {
 });
 
 els.compactBtn.disabled = true;
+
+window.rowDefaults.populateStateSelect(els.addForm.elements.namedItem("state"));
+window.rowDefaults.fillForm(els.addForm);
 
 els.slider.addEventListener("input", async () => {
   state.currentIndex = Number(els.slider.value);

@@ -23,10 +23,10 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: wasm/package-lock.json
+          cache-dependency-path: web/package-lock.json
 
       - name: Build client app
-        working-directory: wasm
+        working-directory: web
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
         run: |
@@ -35,7 +35,7 @@ jobs:
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: wasm/dist
+          path: web/dist
 
   deploy:
     needs: build

@@ -5,7 +5,7 @@ Runs entirely in the browser — no backend, Docker, or network calls. Uses [ice
 ## Development
 
 ```bash
-cd wasm
+cd web
 npm install
 npm run dev
 ```
@@ -13,12 +13,12 @@ npm run dev
 ## Production build
 
 ```bash
-cd wasm
+cd web
 npm install
 npm run build
 ```
 
-Output goes to `wasm/dist/`. For GitHub Pages the workflow sets `BASE_PATH=/<repo-name>/` automatically. For a custom subpath:
+Output goes to `web/dist/`. For GitHub Pages the workflow sets `BASE_PATH=/<repo-name>/` automatically. For a custom subpath:
 
 ```bash
 BASE_PATH=/my-path/ npm run build
@@ -28,11 +28,20 @@ BASE_PATH=/my-path/ npm run build
 
 Append `?embed=1` to hide the page header — useful for iframe embeds in blog posts.
 
+## Row operations
+
+Tables are created as **format v2** with `write.delete.mode=merge-on-read`.
+
+- **Add row** — append snapshot, new data file
+- **Delete** — position delete snapshot; writes a `(file_path, pos)` delete file without rewriting data
+- **Compact partitions** — rewrite data files (physically removes deleted rows)
+
 ## Layout
 
 ```
 src/
   explainer.ts     # Iceberg table ops + snapshot history
+  rowLocations.ts  # Map visible rows → file_path + row position
   memoryStore.ts   # In-memory S3 substitute
   metadata.ts      # Manifest list / manifest decoding
   parquet.ts       # Parquet row + stats reader
