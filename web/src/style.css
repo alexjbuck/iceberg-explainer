@@ -32,6 +32,15 @@ body {
   overflow-x: clip;
 }
 
+body:not(.app-ready) *,
+body:not(.app-ready) *::before,
+body:not(.app-ready) *::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
 header {
   display: flex;
   justify-content: space-between;
@@ -630,12 +639,10 @@ body.embed main {
 
 @keyframes advanced-panel-in {
   0% {
-    opacity: 0.4;
-    transform: translateY(-12px);
+    transform: translateY(-8px);
     box-shadow: 0 0 0 0 transparent;
   }
   40% {
-    opacity: 1;
     transform: translateY(0);
     box-shadow: 0 0 0 2px var(--accent), 0 12px 32px rgba(56, 189, 248, 0.18);
   }
