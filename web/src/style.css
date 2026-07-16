@@ -96,7 +96,8 @@ main {
 #data-panel {
   grid-row: 1 / span 2;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 #timeline-panel,
@@ -113,37 +114,59 @@ main {
 #rows-table {
   table-layout: fixed;
   width: 100%;
-  min-width: 0;
+  min-width: 17rem;
 }
 
 #rows-table th,
 #rows-table td {
-  overflow-wrap: anywhere;
-  word-break: break-word;
   vertical-align: top;
-  max-width: 0;
   padding: 0.55rem 0.35rem;
   font-size: 0.82rem;
 }
 
+#rows-table th:nth-child(3),
+#rows-table td:nth-child(3) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 0;
+}
+
 #rows-table th:nth-child(1),
 #rows-table td:nth-child(1) {
-  width: 28%;
+  width: 5.85rem;
+  min-width: 5.85rem;
+  max-width: none;
+}
+
+#rows-table td:nth-child(1) {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 #rows-table th:nth-child(2),
 #rows-table td:nth-child(2) {
-  width: 22%;
+  width: 2.35rem;
+  min-width: 2.35rem;
+  max-width: none;
 }
 
-#rows-table th:nth-child(3),
-#rows-table td:nth-child(3) {
-  width: 30%;
+#rows-table td:nth-child(2) {
+  white-space: nowrap;
+  text-align: center;
 }
 
 #rows-table th:nth-child(4),
 #rows-table td:nth-child(4) {
-  width: 20%;
+  width: 3.6rem;
+  min-width: 3.6rem;
+  max-width: none;
+  overflow: visible;
+  padding-left: 0.2rem;
+  padding-right: 0.2rem;
+}
+
+#rows-table td.row-actions,
+#rows-table th.row-actions-h {
   max-width: none;
 }
 
@@ -157,9 +180,13 @@ main {
 }
 
 #partition-hint {
+  display: block;
+  height: 4.5rem;
+  overflow-y: auto;
   overflow-wrap: anywhere;
   word-break: break-word;
   line-height: 1.35;
+  box-sizing: border-box;
 }
 
 .panel {
@@ -238,6 +265,7 @@ button.secondary:disabled {
   text-align: right;
   white-space: nowrap;
   max-width: none;
+  overflow: visible;
 }
 
 .row-actions-h {
@@ -245,9 +273,14 @@ button.secondary:disabled {
   max-width: none;
 }
 
-button.compact {
-  padding: 0.35rem 0.55rem;
-  font-size: 0.8rem;
+#rows-table .row-actions button.compact {
+  display: inline-block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 0.28rem 0.35rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
 }
 
 label {
@@ -341,6 +374,25 @@ th {
   background: var(--surface-2);
   border-radius: 8px;
   font-size: 0.9rem;
+}
+
+.query-sql {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.95rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  margin-bottom: 0.35rem;
+  color: var(--accent);
+}
+
+.query-as-of {
+  margin-bottom: 0.75rem;
+}
+
+.query-as-of code {
+  font-size: 0.78rem;
 }
 
 .tabs {

@@ -35,6 +35,7 @@ const els = {
   manifestsContent: document.querySelector('#manifests-content')!,
   parquetContent: document.querySelector('#parquet-content')!,
   diffContent: document.querySelector('#diff-content')!,
+  queryContent: document.querySelector('#query-content')!,
   toast: document.querySelector('#toast')!,
 }
 
@@ -75,22 +76,33 @@ function renderRows(rows: RowRef[], onDelete: (index: number) => void) {
   }
 }
 
-function renderPartitions(partitions: PartitionInfo[]) {
-  const needsCompaction = partitions.filter((p) => p.needs_compaction)
-  if (!partitions.length) {
+function renderPartitions(partitions: PartitionInfo[], pendingDeleteFiles: number) {
+  const needsFileMerge = partitions.filter((p) => p.needs_compaction)
+  if (!partitions.length && pendingDeleteFiles === 0) {
     els.partitionHint.textContent = 'No partitions yet.'
     els.compactBtn.disabled = true
     return
   }
-  if (!needsCompaction.length) {
-    els.partitionHint.textContent = 'All partitions have one data file each.'
+  if (!needsFileMerge.length && pendingDeleteFiles === 0) {
+    els.partitionHint.textContent =
+      'All partitions have one data file each; no pending position deletes.'
     els.compactBtn.disabled = true
     return
   }
-  const summary = needsCompaction
-    .map((p) => `month=${p.date_month}/bucket=${p.state_bucket_10} (${p.file_count} files)`)
-    .join(', ')
-  els.partitionHint.textContent = `Can compact: ${summary}`
+  const hints: string[] = []
+  if (needsFileMerge.length) {
+    hints.push(
+      needsFileMerge
+        .map((p) => `month=${p.date_month}/bucket=${p.state_bucket_10} (${p.file_count} files)`)
+        .join(', '),
+    )
+  }
+  if (pendingDeleteFiles > 0) {
+    hints.push(
+      `${pendingDeleteFiles} position delete file${pendingDeleteFiles === 1 ? '' : 's'} to consume`,
+    )
+  }
+  els.partitionHint.textContent = `Can compact: ${hints.join('; ')}`
   els.compactBtn.disabled = false
 }
 
@@ -330,12 +342,33 @@ async function loadParquet(explainer: IcebergExplainer, index: number) {
   renderParquet(data)
 }
 
+async function loadQuery(explainer: IcebergExplainer, index: number) {
+  els.queryContent.innerHTML = '<p class="muted">Running query…</p>'
+  try {
+    const result = await explainer.queryAtSnapshot(index)
+    renderQuery(result)
+  } catch (err) {
+    els.queryContent.innerHTML = `<p class="empty">Query failed: ${escapeHtml((err as Error).message)}</p>`
+  }
+}
+
+function renderQuery(result: Awaited<ReturnType<IcebergExplainer['queryAtSnapshot']>>) {
+  const snapshotRef =
+    result.snapshotId != null
+      ? `snapshot #${result.snapshotIndex} (<code>${escapeHtml(result.snapshotId)}</code>)`
+      : `snapshot #${result.snapshotIndex} (no snapshot yet)`
+  els.queryContent.innerHTML = `
+    <div class="query-sql">${escapeHtml(result.sql)};</div>
+    <p class="hint query-as-of">AS OF ${snapshotRef} · ${result.rows.length} row(s)</p>
+    ${renderDataTable(['date', 'state', 'value'], result.rows)}`
+}
+
 async function loadSnapshotDetail(explainer: IcebergExplainer, index: number) {
   const snapshot = explainer.getSnapshot(index)
   renderMetadata(snapshot)
   renderManifestList(snapshot)
   renderManifests(snapshot)
-  await loadParquet(explainer, index)
+  await Promise.all([loadParquet(explainer, index), loadQuery(explainer, index)])
   if (index > 0) {
     const before = explainer.getSnapshot(index - 1)
     const after = explainer.getSnapshot(index)
@@ -370,7 +403,7 @@ async function refreshAll(explainer: IcebergExplainer, selectIndex: number | nul
       showToast(`Error: ${(err as Error).message}`)
     }
   })
-  renderPartitions(partitions)
+  renderPartitions(partitions, explainer.countPendingDeleteFiles())
   renderSnapshotList()
   await loadSnapshotDetail(explainer, state.currentIndex)
 }

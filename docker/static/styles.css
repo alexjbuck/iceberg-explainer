@@ -151,9 +151,13 @@ main {
 }
 
 #partition-hint {
+  display: block;
+  height: 4.5rem;
+  overflow-y: auto;
   overflow-wrap: anywhere;
   word-break: break-word;
   line-height: 1.35;
+  box-sizing: border-box;
 }
 
 .panel {

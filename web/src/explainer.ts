@@ -10,6 +10,7 @@ import {
   loadLatestFileCatalogMetadata,
 } from 'icebird'
 import type { FileCatalog, TableMetadata } from 'icebird/src/types.js'
+import { splitManifestEntries } from 'icebird/src/manifest.js'
 import { fetchSnapshotBundle, type MetadataBundle } from './metadata.js'
 import { formatRow, isoToDays } from './json.js'
 import { MemoryObjectStore } from './memoryStore.js'
@@ -17,7 +18,38 @@ import { resolveVisibleRows, type RowRef } from './rowLocations.js'
 
 export type { RowRef }
 
+const MANIFEST_DELETED = 2
+const CONTENT_DATA = 0
+const CONTENT_POSITION_DELETE = 1
+
+function countPendingDeleteFiles(bundle: MetadataBundle): number {
+  let count = 0
+  for (const manifest of bundle.manifests) {
+    for (const raw of manifest.entries) {
+      const e = raw as { status: number; data_file: Record<string, unknown> }
+      if (e.status === MANIFEST_DELETED) continue
+      if (e.data_file.content === CONTENT_POSITION_DELETE) count++
+    }
+  }
+  return count
+}
+
+function dataFileCounts(manifests: Awaited<ReturnType<typeof icebergManifests>>) {
+  const fileCounts = new Map<string, number>()
+  for (const { entries } of manifests) {
+    for (const entry of entries) {
+      if (entry.status === MANIFEST_DELETED || entry.data_file.content !== CONTENT_DATA) {
+        continue
+      }
+      const key = JSON.stringify(entry.data_file.partition)
+      fileCounts.set(key, (fileCounts.get(key) ?? 0) + 1)
+    }
+  }
+  return fileCounts
+}
+
 const TABLE_URL = 'memory://warehouse/demo/events'
+const TABLE_NAME = 'demo.events'
 
 const SCHEMA = {
   type: 'struct' as const,
@@ -85,6 +117,50 @@ export class IcebergExplainer {
     await this.reset()
   }
 
+  private async readLiveRows(
+    metadata: TableMetadata,
+    snapshotId?: number | bigint | null,
+  ): Promise<Record<string, unknown>[]> {
+    const sid = snapshotId ?? metadata['current-snapshot-id']
+    if (sid == null) return []
+    const manifests = await icebergManifests({
+      metadata,
+      resolver: this.store.resolver(),
+      snapshotId: sid,
+    })
+    const { dataEntries } = splitManifestEntries(manifests)
+    if (dataEntries.length === 0) return []
+    return icebergRead({
+      tableUrl: TABLE_URL,
+      metadata,
+      snapshotId: sid,
+      resolver: this.store.resolver(),
+      lister: this.store.lister(),
+    })
+  }
+
+  /** Live table scan at a history snapshot (merge-on-read, time travel). */
+  async queryAtSnapshot(index: number): Promise<{
+    sql: string
+    snapshotIndex: number
+    snapshotId: string | null
+    rows: Array<Record<string, string>>
+  }> {
+    const entry = this.history[index]
+    if (!entry) throw new Error(`Snapshot index ${index} out of range`)
+    const snapshotId = entry.bundle.current_snapshot_id
+    const rows =
+      snapshotId != null
+        ? await this.readLiveRows(entry.metadata, BigInt(snapshotId))
+        : []
+    return {
+      sql: `SELECT * FROM ${TABLE_NAME}`,
+      snapshotIndex: index,
+      snapshotId: snapshotId != null ? String(snapshotId) : null,
+      rows: rows.map((r) => formatRow(r)),
+    }
+  }
+
   private async capture(label: string, action: string): Promise<number> {
     const { metadata, metadataLocation } = await loadLatestFileCatalogMetadata({
       tableUrl: TABLE_URL,
@@ -92,15 +168,10 @@ export class IcebergExplainer {
       lister: this.store.lister(),
     })
 
-    let rows: Record<string, unknown>[] = []
-    if (metadata['current-snapshot-id'] != null) {
-      rows = await icebergRead({
-        tableUrl: TABLE_URL,
-        metadata,
-        resolver: this.store.resolver(),
-        lister: this.store.lister(),
-      })
-    }
+    const rows =
+      metadata['current-snapshot-id'] != null
+        ? await this.readLiveRows(metadata)
+        : []
 
     let bundle: MetadataBundle
     if (metadata['current-snapshot-id'] != null) {
@@ -204,57 +275,68 @@ export class IcebergExplainer {
   }
 
   async compact(): Promise<number> {
-    const { metadata } = await loadLatestFileCatalogMetadata({
+    const { metadata, metadataLocation } = await loadLatestFileCatalogMetadata({
       tableUrl: TABLE_URL,
       resolver: this.store.resolver(),
       lister: this.store.lister(),
     })
-    const rows = await icebergRead({
-      tableUrl: TABLE_URL,
-      metadata,
-      resolver: this.store.resolver(),
-      lister: this.store.lister(),
-    })
-    if (rows.length === 0) {
-      return this.capture('Compact (no-op): table is empty', 'compact')
-    }
 
     const manifests = await icebergManifests({
       metadata,
       resolver: this.store.resolver(),
     })
-    const fileCounts = new Map<string, number>()
-    for (const { entries } of manifests) {
-      for (const entry of entries) {
-        if (entry.status === 2 || entry.data_file.content !== 0) continue
-        const key = JSON.stringify(entry.data_file.partition)
-        fileCounts.set(key, (fileCounts.get(key) ?? 0) + 1)
+    const { dataEntries } = splitManifestEntries(manifests)
+    const bundle = await fetchSnapshotBundle(
+      metadata,
+      metadataLocation,
+      this.store.resolver(),
+    )
+    const pendingDeletes = countPendingDeleteFiles(bundle)
+    const fileCounts = dataFileCounts(manifests)
+    const mergeTargets = [...fileCounts.entries()].filter(([, n]) => n > 1)
+
+    if (mergeTargets.length === 0 && pendingDeletes === 0) {
+      if (dataEntries.length === 0) {
+        return this.capture('Compact (no-op): table is already empty', 'compact')
       }
-    }
-    const needsCompact = [...fileCounts.values()].some((n) => n > 1)
-    if (!needsCompact) {
       return this.capture(
-        'Compact (no-op): every partition already has one data file',
+        'Compact (no-op): no extra data files or position deletes to consume',
         'compact',
       )
     }
 
     await icebergRewrite({ catalog: this.catalog, tableUrl: TABLE_URL })
-    const parts = [...fileCounts.entries()]
-      .filter(([, n]) => n > 1)
-      .map(([p, n]) => `${p} (${n} files → 1)`)
-    return this.capture(`Compacted: ${parts.join(', ')}`, 'compact')
+
+    const parts: string[] = []
+    if (mergeTargets.length > 0) {
+      parts.push(
+        ...mergeTargets.map(([p, n]) => `${p} (${n} data files → 1)`),
+      )
+    }
+    if (pendingDeletes > 0) {
+      parts.push(
+        `${pendingDeletes} position delete file${pendingDeletes === 1 ? '' : 's'} consumed`,
+      )
+    }
+    return this.capture(`Compacted: ${parts.join('; ')}`, 'compact')
+  }
+
+  countPendingDeleteFiles(): number {
+    if (this.history.length === 0) return 0
+    return countPendingDeleteFiles(this.history[this.history.length - 1].bundle)
+  }
+
+  canCompact(): boolean {
+    const partitions = this.getPartitions()
+    return (
+      partitions.some((p) => p.needs_compaction) || this.countPendingDeleteFiles() > 0
+    )
   }
 
   async getRows(): Promise<Array<Record<string, string>>> {
     if (this.history.length === 0) return []
     const entry = this.history[this.history.length - 1]
-    const rows = await icebergRead({
-      tableUrl: TABLE_URL,
-      metadata: entry.metadata,
-      resolver: this.store.resolver(),
-      lister: this.store.lister(),
-    })
+    const rows = await this.readLiveRows(entry.metadata)
     return rows.map((r) => formatRow(r))
   }
 
