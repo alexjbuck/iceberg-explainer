@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Iceberg Metadata Explainer</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Iceberg Metadata Explainer</h1>
+      <p class="subtitle">
+        Write rows to a partitioned table — <code>date</code> is bucketed by month,
+        <code>state</code> by hash into 10 buckets — and watch metadata evolve.
+      </p>
+    </div>
+    <div class="stack-info">
+      <span>SQLite catalog</span>
+      <span>RustFS (S3)</span>
+      <span>PyIceberg</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel" id="data-panel">
+      <div class="panel-header">
+        <h2>Table Data</h2>
+        <button type="button" id="reset-btn" class="danger">Reset table</button>
+      </div>
+
+      <form id="add-row-form" class="row-form">
+        <label>
+          date
+          <input name="date" type="text" placeholder="2026-07-16" required />
+        </label>
+        <label>
+          state
+          <input name="state" type="text" placeholder="CA" required />
+        </label>
+        <label>
+          value
+          <input name="value" type="text" placeholder="anything" required />
+        </label>
+        <button type="submit">Add row</button>
+      </form>
+
+      <div class="action-row">
+        <button type="button" id="compact-btn" class="secondary">Compact partitions</button>
+        <span id="partition-hint" class="muted"></span>
+      </div>
+
+      <div class="table-wrap">
+        <table id="rows-table">
+          <thead>
+            <tr>
+              <th>date <span class="tag" title="month transform">mo</span></th>
+              <th>state <span class="tag" title="bucket[10] transform">b10</span></th>
+              <th>value</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="timeline-panel">
+      <div class="panel-header">
+        <h2>Snapshot Timeline</h2>
+        <span id="snapshot-count" class="muted"></span>
+      </div>
+      <p class="hint">Each write creates a new Iceberg snapshot. Scrub the slider to time-travel.</p>
+      <input type="range" id="snapshot-slider" min="0" max="0" value="0" />
+      <div id="snapshot-label" class="snapshot-label"></div>
+    </section>
+
+    <section class="panel" id="structure-panel">
+      <div class="panel-header">
+        <h2>Metadata Structure</h2>
+        <div class="tabs">
+          <button type="button" class="tab active" data-tab="metadata">metadata.json</button>
+          <button type="button" class="tab" data-tab="manifest-list">manifest list</button>
+          <button type="button" class="tab" data-tab="manifests">manifests</button>
+          <button type="button" class="tab" data-tab="parquet">parquet files</button>
+          <button type="button" class="tab" data-tab="diff">diff vs previous</button>
+        </div>
+      </div>
+
+      <div id="tab-metadata" class="tab-pane active">
+        <div class="file-path" id="metadata-path"></div>
+        <div class="callout" id="metadata-summary"></div>
+        <pre id="metadata-json"></pre>
+      </div>
+
+      <div id="tab-manifest-list" class="tab-pane">
+        <div class="file-path" id="manifest-list-path"></div>
+        <p class="hint">The manifest list is an Avro file. Each row points at a manifest file.</p>
+        <div id="manifest-list-content"></div>
+      </div>
+
+      <div id="tab-manifests" class="tab-pane">
+        <p class="hint">Manifest files list data files and their partition values.</p>
+        <div id="manifests-content"></div>
+      </div>
+
+      <div id="tab-parquet" class="tab-pane">
+        <p class="hint">Actual Parquet data files on disk — row contents and footer statistics.</p>
+        <div id="parquet-content"></div>
+      </div>
+
+      <div id="tab-diff" class="tab-pane">
+        <div id="diff-content"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
