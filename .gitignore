@@ -1,5 +1,7 @@
-data/
+docker/data/
 .venv/
+wasm/node_modules/
+wasm/dist/
 __pycache__/
 *.pyc
 .DS_Store
