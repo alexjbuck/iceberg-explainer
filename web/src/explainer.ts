@@ -15,12 +15,29 @@ import { fetchSnapshotBundle, type MetadataBundle } from './metadata.js'
 import { formatRow, isoToDays } from './json.js'
 import { MemoryObjectStore } from './memoryStore.js'
 import { resolveVisibleRows, type RowRef } from './rowLocations.js'
+import {
+  buildPartitionSpec,
+  buildSortOrder,
+  DEFAULT_TABLE_CONFIG,
+  describePartitionSpec,
+  type TableConfig,
+} from './tableConfig.js'
 
 export type { RowRef }
 
 const MANIFEST_DELETED = 2
 const CONTENT_DATA = 0
 const CONTENT_POSITION_DELETE = 1
+
+const SCHEMA = {
+  type: 'struct' as const,
+  'schema-id': 0,
+  fields: [
+    { id: 1, name: 'date', required: true, type: 'date' as const },
+    { id: 2, name: 'state', required: true, type: 'string' as const },
+    { id: 3, name: 'value', required: true, type: 'string' as const },
+  ],
+}
 
 function countPendingDeleteFiles(bundle: MetadataBundle): number {
   let count = 0
@@ -48,37 +65,6 @@ function dataFileCounts(manifests: Awaited<ReturnType<typeof icebergManifests>>)
   return fileCounts
 }
 
-const TABLE_URL = 'memory://warehouse/demo/events'
-const TABLE_NAME = 'demo.events'
-
-const SCHEMA = {
-  type: 'struct' as const,
-  'schema-id': 0,
-  fields: [
-    { id: 1, name: 'date', required: true, type: 'date' as const },
-    { id: 2, name: 'state', required: true, type: 'string' as const },
-    { id: 3, name: 'value', required: true, type: 'string' as const },
-  ],
-}
-
-const PARTITION_SPEC = {
-  'spec-id': 0,
-  fields: [
-    {
-      'source-id': 1,
-      'field-id': 1001,
-      name: 'date_month',
-      transform: 'month' as const,
-    },
-    {
-      'source-id': 2,
-      'field-id': 1002,
-      name: 'state_bucket_10',
-      transform: 'bucket[10]' as const,
-    },
-  ],
-}
-
 export type SnapshotSummary = {
   index: number
   snapshot_id: string | null
@@ -89,6 +75,25 @@ export type SnapshotSummary = {
   metadata_file: string
   manifest_list_path: string | null
   manifest_count: number
+}
+
+export type PartitionInfo = {
+  partition: Record<string, unknown>
+  partition_label: string
+  record_count: number
+  file_count: number
+  needs_compaction: boolean
+}
+
+export type TableMetrics = {
+  snapshot_count: number
+  data_file_count: number
+  delete_file_count: number
+  partition_count: number
+  partitions_needing_compaction: number
+  manifest_count: number
+  row_count: number
+  pending_delete_files: number
 }
 
 type HistoryEntry = {
@@ -105,12 +110,26 @@ export class IcebergExplainer {
   private readonly store = new MemoryObjectStore()
   private catalog: FileCatalog
   private history: HistoryEntry[] = []
+  private readonly config: TableConfig
+  private readonly tableUrl: string
+  private readonly tableName: string
 
-  constructor() {
+  constructor(config: TableConfig = DEFAULT_TABLE_CONFIG, tableId = 'events') {
+    this.config = config
+    this.tableUrl = `memory://warehouse/demo/${tableId}`
+    this.tableName = `demo.${tableId}`
     this.catalog = fileCatalog({
       resolver: this.store.resolver(),
       lister: this.store.lister(),
     })
+  }
+
+  getConfig(): TableConfig {
+    return this.config
+  }
+
+  getConfigDescription(): string {
+    return describePartitionSpec(this.config)
   }
 
   async init(): Promise<void> {
@@ -131,7 +150,7 @@ export class IcebergExplainer {
     const { dataEntries } = splitManifestEntries(manifests)
     if (dataEntries.length === 0) return []
     return icebergRead({
-      tableUrl: TABLE_URL,
+      tableUrl: this.tableUrl,
       metadata,
       snapshotId: sid,
       resolver: this.store.resolver(),
@@ -139,7 +158,6 @@ export class IcebergExplainer {
     })
   }
 
-  /** Live table scan at a history snapshot (merge-on-read, time travel). */
   async queryAtSnapshot(index: number): Promise<{
     sql: string
     snapshotIndex: number
@@ -154,7 +172,7 @@ export class IcebergExplainer {
         ? await this.readLiveRows(entry.metadata, BigInt(snapshotId))
         : []
     return {
-      sql: `SELECT * FROM ${TABLE_NAME}`,
+      sql: `SELECT * FROM ${this.tableName}`,
       snapshotIndex: index,
       snapshotId: snapshotId != null ? String(snapshotId) : null,
       rows: rows.map((r) => formatRow(r)),
@@ -163,7 +181,7 @@ export class IcebergExplainer {
 
   private async capture(label: string, action: string): Promise<number> {
     const { metadata, metadataLocation } = await loadLatestFileCatalogMetadata({
-      tableUrl: TABLE_URL,
+      tableUrl: this.tableUrl,
       resolver: this.store.resolver(),
       lister: this.store.lister(),
     })
@@ -213,7 +231,7 @@ export class IcebergExplainer {
     try {
       await icebergDropTable({
         catalog: this.catalog,
-        tableUrl: TABLE_URL,
+        tableUrl: this.tableUrl,
         lister: this.store.lister(),
         purgeRequested: true,
       })
@@ -222,9 +240,10 @@ export class IcebergExplainer {
     }
     await icebergCreateTable({
       catalog: this.catalog,
-      tableUrl: TABLE_URL,
+      tableUrl: this.tableUrl,
       schema: SCHEMA,
-      partitionSpec: PARTITION_SPEC,
+      partitionSpec: buildPartitionSpec(this.config),
+      sortOrder: buildSortOrder(this.config),
       formatVersion: 2,
       properties: {
         'write.delete.mode': 'merge-on-read',
@@ -236,7 +255,7 @@ export class IcebergExplainer {
   async addRow(date: string, state: string, value: string): Promise<number> {
     await icebergAppend({
       catalog: this.catalog,
-      tableUrl: TABLE_URL,
+      tableUrl: this.tableUrl,
       records: [{ date: isoToDays(date), state, value }],
     })
     return this.capture(`Added row: ${date} / ${state} / ${value}`, 'append')
@@ -244,7 +263,7 @@ export class IcebergExplainer {
 
   async deleteRow(logicalIndex: number): Promise<number> {
     const { metadata } = await loadLatestFileCatalogMetadata({
-      tableUrl: TABLE_URL,
+      tableUrl: this.tableUrl,
       resolver: this.store.resolver(),
       lister: this.store.lister(),
     })
@@ -256,7 +275,7 @@ export class IcebergExplainer {
 
     await icebergDelete({
       catalog: this.catalog,
-      tableUrl: TABLE_URL,
+      tableUrl: this.tableUrl,
       resolver: this.store.resolver(),
       deletes: [{ file_path: target.file_path, pos: target.pos }],
     })
@@ -276,7 +295,7 @@ export class IcebergExplainer {
 
   async compact(): Promise<number> {
     const { metadata, metadataLocation } = await loadLatestFileCatalogMetadata({
-      tableUrl: TABLE_URL,
+      tableUrl: this.tableUrl,
       resolver: this.store.resolver(),
       lister: this.store.lister(),
     })
@@ -305,7 +324,7 @@ export class IcebergExplainer {
       )
     }
 
-    await icebergRewrite({ catalog: this.catalog, tableUrl: TABLE_URL })
+    await icebergRewrite({ catalog: this.catalog, tableUrl: this.tableUrl })
 
     const parts: string[] = []
     if (mergeTargets.length > 0) {
@@ -340,12 +359,12 @@ export class IcebergExplainer {
     return rows.map((r) => formatRow(r))
   }
 
-  getPartitions(): Array<Record<string, unknown>> {
+  getPartitions(): PartitionInfo[] {
     if (this.history.length === 0) return []
     const entry = this.history[this.history.length - 1]
     const counts = new Map<
       string,
-      { date_month: unknown; state_bucket_10: unknown; record_count: number; file_count: number }
+      { partition: Record<string, unknown>; record_count: number; file_count: number }
     >()
     for (const manifest of entry.bundle.manifests) {
       for (const raw of manifest.entries) {
@@ -356,8 +375,7 @@ export class IcebergExplainer {
         const part = df.partition as Record<string, unknown>
         const key = JSON.stringify(part)
         const cur = counts.get(key) ?? {
-          date_month: part.date_month,
-          state_bucket_10: part.state_bucket_10,
+          partition: part,
           record_count: 0,
           file_count: 0,
         }
@@ -367,9 +385,63 @@ export class IcebergExplainer {
       }
     }
     return [...counts.values()].map((p) => ({
-      ...p,
+      partition: p.partition,
+      partition_label: formatPartitionLabel(p.partition),
+      record_count: p.record_count,
+      file_count: p.file_count,
       needs_compaction: p.file_count > 1,
     }))
+  }
+
+  getMetricsAt(index: number): TableMetrics {
+    const entry = this.history[index]
+    if (!entry) {
+      return {
+        snapshot_count: this.history.length,
+        data_file_count: 0,
+        delete_file_count: 0,
+        partition_count: 0,
+        partitions_needing_compaction: 0,
+        manifest_count: 0,
+        row_count: 0,
+        pending_delete_files: 0,
+      }
+    }
+
+    let dataFiles = 0
+    let deleteFiles = 0
+    const partitionKeys = new Set<string>()
+    const fileCounts = new Map<string, number>()
+
+    for (const manifest of entry.bundle.manifests) {
+      for (const raw of manifest.entries) {
+        const e = raw as { status: number; data_file: Record<string, unknown> }
+        if (e.status === MANIFEST_DELETED) continue
+        const content = e.data_file.content as number
+        if (content === CONTENT_DATA) {
+          dataFiles++
+          const part = e.data_file.partition as Record<string, unknown>
+          const key = JSON.stringify(part)
+          partitionKeys.add(key)
+          fileCounts.set(key, (fileCounts.get(key) ?? 0) + 1)
+        } else if (content === CONTENT_POSITION_DELETE) {
+          deleteFiles++
+        }
+      }
+    }
+
+    const partitionsNeedingCompaction = [...fileCounts.values()].filter((n) => n > 1).length
+
+    return {
+      snapshot_count: this.history.length,
+      data_file_count: dataFiles,
+      delete_file_count: deleteFiles,
+      partition_count: partitionKeys.size,
+      partitions_needing_compaction: partitionsNeedingCompaction,
+      manifest_count: entry.bundle.manifests.length,
+      row_count: entry.rowCount,
+      pending_delete_files: countPendingDeleteFiles(entry.bundle),
+    }
   }
 
   listSnapshots(): SnapshotSummary[] {
@@ -397,3 +469,8 @@ export class IcebergExplainer {
   }
 }
 
+function formatPartitionLabel(partition: Record<string, unknown>): string {
+  return Object.entries(partition)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(', ')
+}

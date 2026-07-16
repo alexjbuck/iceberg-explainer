@@ -19,6 +19,10 @@
         <span>in-memory catalog</span>
         <span>in-memory S3</span>
         <span>icebird (JS)</span>
+        <label class="advanced-toggle">
+          <input type="checkbox" id="advanced-toggle" />
+          <span id="advanced-toggle-text">Advanced mode</span>
+        </label>
       </div>
     </header>
 
@@ -54,8 +58,8 @@
           <table id="rows-table">
             <thead>
               <tr>
-                <th>date <span class="tag" title="month transform">mo</span></th>
-                <th>state <span class="tag" title="bucket[10] transform">b10</span></th>
+                <th>date <span class="tag" id="date-col-tag" title="month transform">mo</span></th>
+                <th>state <span class="tag" id="state-col-tag" title="bucket[10] transform">b10</span></th>
                 <th>value</th>
                 <th class="row-actions-h">del</th>
               </tr>
@@ -117,6 +121,43 @@
 
         <div id="tab-diff" class="tab-pane">
           <div id="diff-content"></div>
+        </div>
+      </section>
+
+      <section class="panel hidden" id="advanced-panel">
+        <div class="advanced-panel-intro">
+          <span class="advanced-panel-intro-icon" aria-hidden="true">↓</span>
+          <div>
+            <strong>Layout comparison</strong>
+            <span class="muted"> — opened below the main demo</span>
+          </div>
+        </div>
+        <div class="panel-header">
+          <h2>Compare table layouts</h2>
+          <button type="button" id="add-variant-btn" class="secondary">Add variant</button>
+        </div>
+        <div class="callout callout-warning">
+          <strong>Browser-only replay.</strong> Each variant re-runs your full operation history in JavaScript.
+          This is for learning and comparison — not production use. Many rows × many variants will get slow;
+          keep the demo small (a handful of rows, 1–2 variants).
+          For heavier experiments, run the
+          <a href="https://github.com/alexjbuck/iceberg-explainer/tree/main/docker">local Docker variant</a>
+          (PyIceberg + RustFS) — same UI patterns, fewer browser performance limits.
+        </div>
+        <p class="hint">
+          Perform some writes, deletes, and compacts above, then configure alternate partition/sort layouts here
+          to see how metadata would differ.
+        </p>
+        <div class="callout">
+          <strong>Operation history:</strong>
+          <code id="operation-script">(none)</code>
+        </div>
+        <h3>Comparison variants</h3>
+        <p class="hint muted">Primary table uses the default layout (month + bucket[10]). Configure up to three alternate layouts below.</p>
+        <div id="compare-variants" class="compare-variants"></div>
+        <h3>Results</h3>
+        <div id="compare-results">
+          <p class="empty">Enable advanced mode and perform some operations to compare layouts.</p>
         </div>
       </section>
     </main>

@@ -1,16 +1,14 @@
 import { diffSnapshots } from './metadata.js'
-import { IcebergExplainer } from './explainer.js'
+import { IcebergExplainer, type PartitionInfo, type RowRef } from './explainer.js'
+import { initAdvancedMode } from './advancedMode.js'
+import { OperationLog } from './operationLog.js'
 import { toJson } from './json.js'
 import { readParquetFiles } from './parquet.js'
 import { RowDefaults } from './rowDefaults.js'
-import type { SnapshotSummary, RowRef } from './explainer.js'
+import { formatStateTransformShort, stateTransformToIceberg } from './tableConfig.js'
+import type { SnapshotSummary } from './explainer.js'
 
-type PartitionInfo = {
-  date_month: unknown
-  state_bucket_10: unknown
-  file_count: number
-  needs_compaction: boolean
-}
+type PartitionInfoView = PartitionInfo
 
 const state = {
   snapshots: [] as SnapshotSummary[],
@@ -37,7 +35,12 @@ const els = {
   diffContent: document.querySelector('#diff-content')!,
   queryContent: document.querySelector('#query-content')!,
   toast: document.querySelector('#toast')!,
+  dateColTag: document.querySelector('#date-col-tag')!,
+  stateColTag: document.querySelector('#state-col-tag')!,
 }
+
+const operationLog = new OperationLog()
+let advancedMode: ReturnType<typeof initAdvancedMode> | null = null
 
 function showToast(message: string) {
   els.toast.textContent = message
@@ -76,7 +79,7 @@ function renderRows(rows: RowRef[], onDelete: (index: number) => void) {
   }
 }
 
-function renderPartitions(partitions: PartitionInfo[], pendingDeleteFiles: number) {
+function renderPartitions(partitions: PartitionInfoView[], pendingDeleteFiles: number) {
   const needsFileMerge = partitions.filter((p) => p.needs_compaction)
   if (!partitions.length && pendingDeleteFiles === 0) {
     els.partitionHint.textContent = 'No partitions yet.'
@@ -93,7 +96,7 @@ function renderPartitions(partitions: PartitionInfo[], pendingDeleteFiles: numbe
   if (needsFileMerge.length) {
     hints.push(
       needsFileMerge
-        .map((p) => `month=${p.date_month}/bucket=${p.state_bucket_10} (${p.file_count} files)`)
+        .map((p) => `${p.partition_label} (${p.file_count} files)`)
         .join(', '),
     )
   }
@@ -104,6 +107,17 @@ function renderPartitions(partitions: PartitionInfo[], pendingDeleteFiles: numbe
   }
   els.partitionHint.textContent = `Can compact: ${hints.join('; ')}`
   els.compactBtn.disabled = false
+}
+
+function renderColumnTags(explainer: IcebergExplainer) {
+  const config = explainer.getConfig()
+  const dateTag = els.dateColTag as HTMLElement
+  const stateTag = els.stateColTag as HTMLElement
+  dateTag.textContent = config.dateTransform
+  dateTag.title = `${config.dateTransform} transform`
+  const stateLabel = formatStateTransformShort(config.stateTransform)
+  stateTag.textContent = stateLabel
+  stateTag.title = `${stateTransformToIceberg(config.stateTransform)} transform`
 }
 
 function renderSnapshotList() {
@@ -128,14 +142,14 @@ function renderSnapshotList() {
   `
 }
 
-function renderMetadata(snapshot: ReturnType<IcebergExplainer['getSnapshot']>) {
+function renderMetadata(snapshot: ReturnType<IcebergExplainer['getSnapshot']>, explainer: IcebergExplainer) {
   const meta = snapshot.metadata
   els.metadataPath.textContent = snapshot.metadata_location || '(no metadata file yet)'
   els.metadataSummary.innerHTML = `
     <strong>current-snapshot-id:</strong> ${meta['current-snapshot-id'] ?? 'null'} ·
     <strong>snapshots:</strong> ${(meta.snapshots || []).length} ·
     <strong>schema fields:</strong> date, state, value ·
-    <strong>partitions:</strong> date → month, state → bucket[10]
+    <strong>layout:</strong> ${escapeHtml(explainer.getConfigDescription())}
   `
   els.metadataJson.textContent = toJson(meta)
 }
@@ -365,7 +379,7 @@ function renderQuery(result: Awaited<ReturnType<IcebergExplainer['queryAtSnapsho
 
 async function loadSnapshotDetail(explainer: IcebergExplainer, index: number) {
   const snapshot = explainer.getSnapshot(index)
-  renderMetadata(snapshot)
+  renderMetadata(snapshot, explainer)
   renderManifestList(snapshot)
   renderManifests(snapshot)
   await Promise.all([loadParquet(explainer, index), loadQuery(explainer, index)])
@@ -389,14 +403,16 @@ async function loadSnapshotDetail(explainer: IcebergExplainer, index: number) {
 
 async function refreshAll(explainer: IcebergExplainer, selectIndex: number | null = null) {
   const rows = await explainer.getVisibleRows()
-  const partitions = explainer.getPartitions() as PartitionInfo[]
+  const partitions = explainer.getPartitions()
   state.snapshots = explainer.listSnapshots()
   state.parquetCache = {}
   state.currentIndex =
     selectIndex !== null ? selectIndex : Math.max(0, state.snapshots.length - 1)
+  renderColumnTags(explainer)
   renderRows(rows, async (index) => {
     try {
       const idx = await explainer.deleteRow(index)
+      operationLog.append({ type: 'delete', logicalIndex: index })
       await refreshAll(explainer, idx)
       showToast('Row deleted — position delete snapshot created')
     } catch (err) {
@@ -406,6 +422,9 @@ async function refreshAll(explainer: IcebergExplainer, selectIndex: number | nul
   renderPartitions(partitions, explainer.countPendingDeleteFiles())
   renderSnapshotList()
   await loadSnapshotDetail(explainer, state.currentIndex)
+  if (advancedMode?.isEnabled()) {
+    await advancedMode.refresh()
+  }
 }
 
 export async function initApp(explainer: IcebergExplainer) {
@@ -420,15 +439,21 @@ export async function initApp(explainer: IcebergExplainer) {
 
   els.compactBtn.disabled = true
 
+  advancedMode = initAdvancedMode({
+    operationLog,
+    getPrimaryConfig: () => explainer.getConfig(),
+    getSnapshotIndex: () => state.currentIndex,
+  })
+
   els.addForm.addEventListener('submit', async (event) => {
     event.preventDefault()
     const form = new FormData(els.addForm)
     try {
-      const idx = await explainer.addRow(
-        String(form.get('date')),
-        String(form.get('state')),
-        String(form.get('value')),
-      )
+      const date = String(form.get('date'))
+      const stateVal = String(form.get('state'))
+      const value = String(form.get('value'))
+      const idx = await explainer.addRow(date, stateVal, value)
+      operationLog.append({ type: 'append', date, state: stateVal, value })
       rowDefaults.advanceAfterAdd()
       rowDefaults.fillForm(els.addForm)
       await refreshAll(explainer, idx)
@@ -442,6 +467,7 @@ export async function initApp(explainer: IcebergExplainer) {
     if (!confirm('Drop the table and delete all snapshots?')) return
     try {
       const idx = await explainer.reset()
+      operationLog.reset()
       rowDefaults.reset()
       rowDefaults.fillForm(els.addForm)
       await refreshAll(explainer, idx)
@@ -454,6 +480,7 @@ export async function initApp(explainer: IcebergExplainer) {
   els.compactBtn.addEventListener('click', async () => {
     try {
       const idx = await explainer.compact()
+      operationLog.append({ type: 'compact' })
       await refreshAll(explainer, idx)
       showToast(explainer.listSnapshots()[idx]?.label ?? 'Compacted')
     } catch (err) {
@@ -465,6 +492,9 @@ export async function initApp(explainer: IcebergExplainer) {
     state.currentIndex = Number(els.slider.value)
     renderSnapshotList()
     await loadSnapshotDetail(explainer, state.currentIndex)
+    if (advancedMode?.isEnabled()) {
+      await advancedMode.refresh()
+    }
   })
 
   document.querySelectorAll('.tab').forEach((tab) => {
@@ -482,4 +512,5 @@ export async function initApp(explainer: IcebergExplainer) {
   })
 
   await refreshAll(explainer)
+  operationLog.reset()
 }
