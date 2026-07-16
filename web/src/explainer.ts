@@ -15,6 +15,7 @@ import { fetchSnapshotBundle, type MetadataBundle } from './metadata.js'
 import { formatRow, isoToDays } from './json.js'
 import { MemoryObjectStore } from './memoryStore.js'
 import { resolveVisibleRows, type RowRef } from './rowLocations.js'
+import { analyzeReadCost } from './readCost.js'
 import {
   buildPartitionSpec,
   buildSortOrder,
@@ -94,6 +95,12 @@ export type TableMetrics = {
   manifest_count: number
   row_count: number
   pending_delete_files: number
+  fixed_read_files: number
+  fixed_read_bytes: number
+  metadata_tree_files: number
+  metadata_tree_bytes: number
+  full_scan_files: number
+  full_scan_bytes: number
 }
 
 type HistoryEntry = {
@@ -405,6 +412,12 @@ export class IcebergExplainer {
         manifest_count: 0,
         row_count: 0,
         pending_delete_files: 0,
+        fixed_read_files: 0,
+        fixed_read_bytes: 0,
+        metadata_tree_files: 0,
+        metadata_tree_bytes: 0,
+        full_scan_files: 0,
+        full_scan_bytes: 0,
       }
     }
 
@@ -431,6 +444,17 @@ export class IcebergExplainer {
     }
 
     const partitionsNeedingCompaction = [...fileCounts.values()].filter((n) => n > 1).length
+    const readCost = analyzeReadCost(
+      {
+        metadata_location: entry.metadataLocation,
+        metadata: entry.metadata,
+        current_snapshot_id: entry.bundle.current_snapshot_id,
+        manifest_list_path: entry.bundle.manifest_list_path,
+        manifest_list: entry.bundle.manifest_list,
+        manifests: entry.bundle.manifests,
+      },
+      this.store,
+    )
 
     return {
       snapshot_count: this.history.length,
@@ -441,6 +465,12 @@ export class IcebergExplainer {
       manifest_count: entry.bundle.manifests.length,
       row_count: entry.rowCount,
       pending_delete_files: countPendingDeleteFiles(entry.bundle),
+      fixed_read_files: readCost.fixed_file_count,
+      fixed_read_bytes: readCost.fixed_bytes,
+      metadata_tree_files: readCost.metadata_tree_file_count,
+      metadata_tree_bytes: readCost.metadata_tree_bytes,
+      full_scan_files: readCost.full_scan_file_count,
+      full_scan_bytes: readCost.full_scan_bytes,
     }
   }
 

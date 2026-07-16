@@ -6,6 +6,7 @@ import { toJson } from './json.js'
 import { readParquetFiles } from './parquet.js'
 import { RowDefaults } from './rowDefaults.js'
 import { formatStateTransformShort, stateTransformToIceberg } from './tableConfig.js'
+import { analyzeReadCost, formatBytes, renderReadPathHtml } from './readCost.js'
 import type { SnapshotSummary } from './explainer.js'
 
 type PartitionInfoView = PartitionInfo
@@ -34,6 +35,7 @@ const els = {
   parquetContent: document.querySelector('#parquet-content')!,
   diffContent: document.querySelector('#diff-content')!,
   queryContent: document.querySelector('#query-content')!,
+  readPathContent: document.querySelector('#read-path-content')!,
   toast: document.querySelector('#toast')!,
   dateColTag: document.querySelector('#date-col-tag')!,
   stateColTag: document.querySelector('#state-col-tag')!,
@@ -144,14 +146,30 @@ function renderSnapshotList() {
 
 function renderMetadata(snapshot: ReturnType<IcebergExplainer['getSnapshot']>, explainer: IcebergExplainer) {
   const meta = snapshot.metadata
+  const readCost = analyzeReadCost(snapshot, explainer.getStore())
   els.metadataPath.textContent = snapshot.metadata_location || '(no metadata file yet)'
   els.metadataSummary.innerHTML = `
     <strong>current-snapshot-id:</strong> ${meta['current-snapshot-id'] ?? 'null'} ·
     <strong>snapshots:</strong> ${(meta.snapshots || []).length} ·
     <strong>schema fields:</strong> date, state, value ·
-    <strong>layout:</strong> ${escapeHtml(explainer.getConfigDescription())}
+    <strong>layout:</strong> ${escapeHtml(explainer.getConfigDescription())}<br />
+    <strong>Fixed query reads:</strong> ${readCost.fixed_file_count} file(s) · ${formatBytes(readCost.fixed_bytes)}
+    (metadata.json + manifest list) ·
+    <strong>metadata tree:</strong> ${readCost.metadata_tree_file_count} file(s) · ${formatBytes(readCost.metadata_tree_bytes)}
   `
   els.metadataJson.textContent = toJson(meta)
+}
+
+function renderReadPath(
+  snapshot: ReturnType<IcebergExplainer['getSnapshot']>,
+  explainer: IcebergExplainer,
+  index: number,
+) {
+  const readCost = analyzeReadCost(snapshot, explainer.getStore())
+  els.readPathContent.innerHTML = renderReadPathHtml(readCost, {
+    queryLabel: 'SELECT * FROM demo.events',
+    snapshotIndex: index,
+  })
 }
 
 function renderManifestList(snapshot: ReturnType<IcebergExplainer['getSnapshot']>) {
@@ -380,6 +398,7 @@ function renderQuery(result: Awaited<ReturnType<IcebergExplainer['queryAtSnapsho
 async function loadSnapshotDetail(explainer: IcebergExplainer, index: number) {
   const snapshot = explainer.getSnapshot(index)
   renderMetadata(snapshot, explainer)
+  renderReadPath(snapshot, explainer, index)
   renderManifestList(snapshot)
   renderManifests(snapshot)
   await Promise.all([loadParquet(explainer, index), loadQuery(explainer, index)])

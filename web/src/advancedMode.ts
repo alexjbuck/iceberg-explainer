@@ -1,4 +1,5 @@
 import { replayVariants, type VariantResult } from './compare.js'
+import { formatBytes } from './readCost.js'
 import type { OperationLog } from './operationLog.js'
 import {
   cloneConfig,
@@ -249,19 +250,19 @@ export function initAdvancedMode(deps: AdvancedModeDeps) {
     bindVariantEvents()
   }
 
-  function metricCell(value: number | string, baseline: number | string | null, lowerIsBetter = true) {
-    if (baseline == null || value === baseline) {
-      return `<td>${escapeHtml(value)}</td>`
+  function metricCell(
+    display: number | string,
+    compareVal: number | null,
+    compareBase: number | null,
+    lowerIsBetter = true,
+  ) {
+    if (compareBase == null || compareVal == null || compareVal === compareBase) {
+      return `<td>${escapeHtml(display)}</td>`
     }
-    const num = Number(value)
-    const baseNum = Number(baseline)
-    if (Number.isNaN(num) || Number.isNaN(baseNum)) {
-      return `<td>${escapeHtml(value)}</td>`
-    }
-    const better = lowerIsBetter ? num < baseNum : num > baseNum
-    const worse = lowerIsBetter ? num > baseNum : num < baseNum
+    const better = lowerIsBetter ? compareVal < compareBase : compareVal > compareBase
+    const worse = lowerIsBetter ? compareVal > compareBase : compareVal < compareBase
     const cls = better ? 'metric-better' : worse ? 'metric-worse' : ''
-    return `<td class="${cls}">${escapeHtml(value)}</td>`
+    return `<td class="${cls}">${escapeHtml(display)}</td>`
   }
 
   function renderPartitionsBlock(result: VariantResult) {
@@ -288,9 +289,13 @@ export function initAdvancedMode(deps: AdvancedModeDeps) {
     const columns = [primary, ...variantResults]
     const base = primary.metrics
 
-    const metricRows: { label: string; key: keyof NonNullable<VariantResult['metrics']>; lowerBetter: boolean }[] = [
+    const metricRows: { label: string; key: keyof NonNullable<VariantResult['metrics']>; lowerBetter: boolean; format?: (v: number) => string }[] = [
       { label: 'Snapshots', key: 'snapshot_count', lowerBetter: false },
       { label: 'Visible rows', key: 'row_count', lowerBetter: false },
+      { label: 'Fixed reads (files)', key: 'fixed_read_files', lowerBetter: true },
+      { label: 'Fixed reads (size)', key: 'fixed_read_bytes', lowerBetter: true, format: formatBytes },
+      { label: 'Metadata tree (size)', key: 'metadata_tree_bytes', lowerBetter: true, format: formatBytes },
+      { label: 'Full scan reads (size)', key: 'full_scan_bytes', lowerBetter: true, format: formatBytes },
       { label: 'Data files', key: 'data_file_count', lowerBetter: true },
       { label: 'Position delete files', key: 'delete_file_count', lowerBetter: true },
       { label: 'Pending delete files', key: 'pending_delete_files', lowerBetter: true },
@@ -309,8 +314,15 @@ export function initAdvancedMode(deps: AdvancedModeDeps) {
           .map((col) => {
             if (col.error || !col.metrics) return '<td class="metric-error">—</td>'
             const val = col.metrics[row.key]
-            const baseVal = base?.[row.key] ?? null
-            return metricCell(val, col === primary ? null : baseVal, row.lowerBetter)
+            const display =
+              row.format && typeof val === 'number' ? row.format(val) : val
+            const baseVal = col === primary ? null : (base?.[row.key] as number | undefined) ?? null
+            return metricCell(
+              display,
+              typeof val === 'number' ? val : null,
+              baseVal,
+              row.lowerBetter,
+            )
           })
           .join('')
         return `<tr><th>${row.label}</th>${cells}</tr>`

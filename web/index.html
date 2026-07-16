@@ -85,6 +85,7 @@
           <div class="tabs">
             <button type="button" class="tab active" data-tab="metadata">metadata.json</button>
             <button type="button" class="tab" data-tab="query">SELECT *</button>
+            <button type="button" class="tab" data-tab="read-path">Read path</button>
             <button type="button" class="tab" data-tab="manifest-list">manifest list</button>
             <button type="button" class="tab" data-tab="manifests">manifests</button>
             <button type="button" class="tab" data-tab="parquet">parquet files</button>
@@ -101,6 +102,10 @@
         <div id="tab-query" class="tab-pane">
           <p class="hint">Engine scan at the selected snapshot — position deletes applied (merge-on-read).</p>
           <div id="query-content"></div>
+        </div>
+
+        <div id="tab-read-path" class="tab-pane">
+          <div id="read-path-content"></div>
         </div>
 
         <div id="tab-manifest-list" class="tab-pane">
